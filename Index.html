@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCHEN_KRYNAIA_IGRA_PRO_MORJA</title>
+    <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            background-color: #111;
+            color: #fff;
+            font-family: 'Creepster', 'Press Start 2P', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        canvas {
+            border: 4px solid #333;
+            background-color: #222;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas" width="800" height="450"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const SPRITE_SOURCES = {
+    player: "player.png",   
+    enemy: "enemy.png",     
+    boss: "boss.png",       
+    bullet: "bullet.png"    
+};
+
+const sprites = {
+    player: null,
+    enemy: null,
+    boss: null,
+    bullet: null
+};
+
+let loadedImagesCount = 0;
+const totalImages = Object.keys(SPRITE_SOURCES).length;
+let gameStarted = false;
+
+function loadSprites(callback) {
+    for (let key in SPRITE_SOURCES) {
+        const img = new Image();
+        img.src = SPRITE_SOURCES[key];
+        
+        img.onload = () => {
+            sprites[key] = img;
+            loadedImagesCount++;
+            if (loadedImagesCount === totalImages) {
+                callback();
+            }
+        };
+
+        img.onerror = () => {
+            console.warn(`Failed to load: ${SPRITE_SOURCES[key]}`);
+            loadedImagesCount++;
+            if (loadedImagesCount === totalImages) {
+                callback();
+            }
+        };
+    }
+}
+
+const groundY = 380;
+
+const player = {
+    x: 50,
+    y: groundY - 60, 
+    width: 50,  
+    height: 60, 
+    hp: 1
+};
+
+const machine = {
+    x: 680,
+    y: 200,
+    width: 90,
+    height: 180,
+    shakeTimer: 0 
+};
+
+const boss = {
+    x: 700,
+    y: 120,
+    width: 50,
+    height: 80,
+    kickTimer: 0
+};
+
+let bullets = [];
+let enemies = [];
+let score = 0;
+let gameOver = false;
+
+let spawnInterval = 5000; 
+let isFirstSpawn = true;
+const nextIntervalAfterFirst = 20000; 
+const minSpawnInterval = 2000; 
+let lastSpawnTime = Date.now();
+
+let timeLeft = 5;
+
+let lastShotTime = 0;
+const shotCooldown = 150; 
+let isMouseDown = false;
+
+canvas.addEventListener('mousedown', (e) => {
+    if (gameOver) {
+        resetGame();
+        return;
+    }
+    if (!gameStarted) return;
+    isMouseDown = true;
+    tryShoot();
+});
+
+window.addEventListener('mouseup', () => {
+    isMouseDown = false;
+});
+
+canvas.addEventListener('mouseleave', () => {
+    isMouseDown = false;
+});
+
+function tryShoot() {
+    let now = Date.now();
+    if (now - lastShotTime >= shotCooldown) {
+        bullets.push({
+            x: player.x + player.width,
+            y: player.y + player.height / 2, 
+            vx: 8,
+            vy: 0,
+            size: 10 
+        });
+        lastShotTime = now;
+    }
+}
+
+function resetGame() {
+    player.hp = 1;
+    bullets = [];
+    enemies = [];
+    score = 0;
+    spawnInterval = 5000;
+    isFirstSpawn = true;
+    lastSpawnTime = Date.now();
+    timeLeft = 5;
+    gameOver = false;
+    isMouseDown = false;
+}
+
+function drawPvZText(text, x, y, size, strokeColor = "#000", align = "left") {
+    ctx.save();
+    ctx.fillStyle = "#ffffff"; 
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 5;
+    ctx.font = `bold ${size}px 'Creepster', 'Press Start 2P', sans-serif`;
+    
+    if ('letterSpacing' in ctx) {
+        ctx.letterSpacing = "4px"; 
+    }
+    
+    ctx.textAlign = align;
+    ctx.strokeText(text, x, y);
+    ctx.fillText(text, x, y);
+    ctx.restore();
+}
+
+function update() {
+    if (gameOver || !gameStarted) return;
+
+    if (isMouseDown) {
+        tryShoot();
+    }
+
+    let currentTime = Date.now();
+    let elapsed = (currentTime - lastSpawnTime) * 1.5;
+    
+    timeLeft = Math.max(0, Math.ceil((spawnInterval - elapsed) / 1000));
+
+    if (elapsed >= spawnInterval) {
+        spawnEnemyPair(); 
+        lastSpawnTime = currentTime;
+        
+        if (isFirstSpawn) {
+            spawnInterval = nextIntervalAfterFirst;
+            isFirstSpawn = false;
+        } else {
+            if (spawnInterval > minSpawnInterval) {
+                spawnInterval -= 1000;
+                if (spawnInterval < minSpawnInterval) spawnInterval = minSpawnInterval;
+            }
+        }
+        
+        boss.kickTimer = 15;
+        machine.shakeTimer = 15;
+        timeLeft = Math.ceil(spawnInterval / 1000);
+    }
+
+    if (boss.kickTimer > 0) boss.kickTimer--;
+    if (machine.shakeTimer > 0) machine.shakeTimer--;
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += b.vx;
+
+        if (b.x > canvas.width) {
+            bullets.splice(i, 1);
+        }
+    }
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        let enemy = enemies[i];
+        enemy.x -= enemy.speed; 
+
+        if (enemy.x <= player.x + player.width) {
+            player.hp -= 1;
+            enemies.splice(i, 1);
+            if (player.hp <= 0) {
+                gameOver = true;
+                isMouseDown = false;
+            }
+            continue;
+        }
+
+        for (let j = bullets.length - 1; j >= 0; j--) {
+            let bullet = bullets[j];
+            if (bullet.x > enemy.x && bullet.x < enemy.x + enemy.width &&
+                bullet.y > enemy.y - 10 && bullet.y < enemy.y + enemy.height) {
+                
+                enemy.hp -= 1; 
+                bullets.splice(j, 1); 
+
+                if (enemy.hp <= 0) {
+                    enemies.splice(i, 1);
+                    score += 100;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+function createEnemyObject(offsetX) {
+    let hp = 2;
+    let type = "normal";
+    
+    let currentSpawnTimeSeconds = spawnInterval / 1000;
+    
+    if (currentSpawnTimeSeconds < 10) {
+        if (currentSpawnTimeSeconds < 3) {
+            if (Math.random() < 0.50) {
+                hp = 5;
+                type = "bucket";
+            } else if (Math.random() < 0.70) {
+                hp = 3;
+                type = "cone";
+            }
+        } else {
+            let roll = Math.random();
+            if (roll < 0.10) {
+                hp = 5;
+                type = "bucket";
+            } else if (roll < 0.30) {
+                hp = 3;
+                type = "cone";
+            }
+        }
+    }
+
+    return {
+        x: machine.x + offsetX,
+        y: groundY - 50, 
+        width: 40,  
+        height: 50,
+        speed: 1.3 + Math.random() * 0.5, 
+        hp: hp,
+        maxHp: hp,
+        type: type
+    };
+}
+
+function spawnEnemyPair() {
+    enemies.push(createEnemyObject(-20));
+    enemies.push(createEnemyObject(25));
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#1e1e24";
+    ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY); 
+
+    if (!gameStarted) {
+        ctx.fillStyle = "#fff";
+        ctx.font = "24px 'Creepster', sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("LOADING SPRITES...", canvas.width / 2, canvas.height / 2);
+        ctx.textAlign = "left";
+        return;
+    }
+
+    ctx.imageSmoothingEnabled = false;
+
+    let shakeX = 0;
+    if (machine.shakeTimer > 0) {
+        shakeX = Math.sin(machine.shakeTimer) * 5;
+    }
+
+    ctx.fillStyle = "#9b2226"; 
+    ctx.fillRect(machine.x + shakeX, machine.y, machine.width, machine.height);
+    ctx.fillStyle = "#005f73";
+    ctx.fillRect(machine.x + 15 + shakeX, machine.y + 20, 60, 50);
+    ctx.fillStyle = "#e9d8a6";
+    ctx.fillRect(machine.x + 15 + shakeX, machine.y + 140, 20, 20); 
+
+    let bossYOffset = (boss.kickTimer > 0) ? -10 : 0; 
+    if (sprites.boss && sprites.boss.complete && sprites.boss.naturalWidth !== 0) {
+        ctx.drawImage(sprites.boss, boss.x + shakeX, boss.y + bossYOffset, boss.width, boss.height);
+    } else {
+        ctx.fillStyle = "#ca6702"; 
+        ctx.fillRect(boss.x + shakeX, boss.y + bossYOffset, boss.width, boss.height);
+        ctx.fillStyle = "#000";
+        ctx.fillRect(boss.x + 10 + shakeX, boss.y + 20 + bossYOffset, 8, 8);
+        ctx.fillRect(boss.x + 30 + shakeX, boss.y + 20 + bossYOffset, 8, 8);
+        ctx.fillRect(boss.x + 6 + shakeX, boss.y + 18 + bossYOffset, 38, 6);
+    }
+
+    if (sprites.player && sprites.player.complete && sprites.player.naturalWidth !== 0) {
+        ctx.drawImage(sprites.player, player.x, player.y, player.width, player.height);
+    } else {
+        ctx.fillStyle = "#0a9396"; 
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+        ctx.fillStyle = "#333";
+        ctx.fillRect(player.x + player.width - 5, player.y + player.height / 2 - 4, 15, 8);
+    }
+
+    for (let enemy of enemies) {
+        if (sprites.enemy && sprites.enemy.complete && sprites.enemy.naturalWidth !== 0) {
+            ctx.drawImage(sprites.enemy, enemy.x, enemy.y, enemy.width, enemy.height);
+        } else {
+            ctx.fillStyle = "#9b5de5";
+            ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+        }
+
+        if (enemy.type === "bucket") {
+            ctx.fillStyle = "#adb5bd";
+            ctx.fillRect(enemy.x + 5, enemy.y - 15, enemy.width - 10, 15);
+        } else if (enemy.type === "cone") {
+            ctx.fillStyle = "#f77f00";
+            ctx.beginPath();
+            ctx.moveTo(enemy.x + enemy.width / 2, enemy.y - 20);
+            ctx.lineTo(enemy.x + 5, enemy.y);
+            ctx.lineTo(enemy.x + enemy.width - 5, enemy.y);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        ctx.fillStyle = "#ff5400";
+        ctx.fillRect(enemy.x, enemy.y - 12 - (enemy.type !== "normal" ? 10 : 0), enemy.width, 5);
+        ctx.fillStyle = "#00f5d4";
+        ctx.fillRect(enemy.x, enemy.y - 12 - (enemy.type !== "normal" ? 10 : 0), (enemy.width / enemy.maxHp) * enemy.hp, 5);
+    }
+
+    for (let b of bullets) {
+        if (sprites.bullet && sprites.bullet.complete && sprites.bullet.naturalWidth !== 0) {
+            ctx.drawImage(sprites.bullet, b.x - b.size/2, b.y - b.size/2, b.size, b.size);
+        } else {
+            ctx.fillStyle = "#fff3b0";
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, 6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    drawPvZText(`SCORE: ${score}`, 20, 45, 30, "#000");
+
+    drawPvZText(String(timeLeft), canvas.width - 20, 45, 36, "#000", "right");
+
+    if (gameOver) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        drawPvZText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20, 64, "#000", "center");
+        drawPvZText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 + 45, 32, "#000", "center");
+    }
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+loadSprites(() => {
+    gameStarted = true;
+    resetGame();
+    gameLoop();
+});
+</script>
+
+</body>
+</html>
